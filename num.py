@@ -5,9 +5,8 @@ from flask import Flask, request
 # -----------------------------
 # Environment Variables
 # -----------------------------
-BOT_TOKEN = os.environ.get("BOT_TOKEN")  # Render এ এড করতে হবে
-NUMLOOKUP_API = os.environ.get("NUMLOOKUP_API")  # Render এ এড করতে হবে
-
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
+NUMLOOKUP_API = os.environ.get("NUMLOOKUP_API")
 WEBHOOK_URL = f"https://number-info-bot-shadow.onrender.com/{BOT_TOKEN}"
 API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}/"
 
@@ -38,7 +37,6 @@ def get_num_info(phone: str) -> str:
                 msg += f"📧 Email: `{res['email']}`\n"
 
             msg += f"\n━━━━━━━━━━━━━━━\n👤 Credit: *SHADOW JOKER*"
-
         else:
             msg = f"❌ Invalid Number: `{phone}`"
         return msg
@@ -46,7 +44,7 @@ def get_num_info(phone: str) -> str:
         return f"⚠ Error: {e}"
 
 # -----------------------------
-# Send Message with optional buttons
+# Send Message with Inline Buttons
 # -----------------------------
 def send_message(chat_id, text, buttons=None):
     payload = {
@@ -54,11 +52,20 @@ def send_message(chat_id, text, buttons=None):
         "text": text,
         "parse_mode": "Markdown"
     }
-
     if buttons:
         payload["reply_markup"] = {"inline_keyboard": buttons}
-
     requests.post(API_URL + "sendMessage", json=payload)
+
+# -----------------------------
+# Handle Callback Query
+# -----------------------------
+def answer_callback(callback_id, text):
+    requests.post(API_URL + "answerCallbackQuery", json={"callback_query_id": callback_id, "text": text, "show_alert": False})
+
+# -----------------------------
+# Dictionary to track users waiting for input
+# -----------------------------
+waiting_for_number = set()  # store chat_ids of users who clicked "Send Number"
 
 # -----------------------------
 # Flask Routes
@@ -71,36 +78,50 @@ def home():
 def webhook():
     update = request.get_json()
 
+    # ----------------- Message Handling -----------------
     if "message" in update:
         message = update["message"]
         chat_id = message["chat"]["id"]
         text = message.get("text", "")
 
-        if text.startswith("/num"):
-            args = text.split(" ")
-            if len(args) == 2:
-                number = args[1]
-                info = get_num_info(number)
-                send_message(chat_id, info)
-            else:
-                send_message(chat_id, "⚠ Usage: `/num <MOBILE_NUMBER>` (BD only)")
-
-        elif text == "/start":
-            # Inline button example
+        # /start command
+        if text == "/start":
             buttons = [
-                [{"text": "Send Number 📱", "switch_inline_query_current_chat": ""}]
+                [{"text": "01950178309", "callback_data": "01950178309"}],
+                [{"text": "017XXXXXXXX", "callback_data": "017XXXXXXXX"}],
+                [{"text": "Send Number", "callback_data": "SEND_NUMBER"}]
             ]
             send_message(
                 chat_id,
-                "👋 Welcome to *Number Info Bot* 🇧🇩\n\n"
-                "Click the button below to send a BD number and get info 📱\n\n"
-                "━━━━━━━━━━━━━━━\n👤 Credit: *SHADOW JOKER*",
+                "👋 Welcome to *Number Info Bot* 🇧🇩\nClick a number below to get info or click 'Send Number' to type your own 📱\n━━━━━━━━━━━━━━━\n👤 Credit: *SHADOW JOKER*",
                 buttons
             )
+        else:
+            # Check if user is in waiting state
+            if chat_id in waiting_for_number:
+                number = text.strip()
+                info = get_num_info(number)
+                send_message(chat_id, info)
+                waiting_for_number.remove(chat_id)
+            else:
+                send_message(chat_id, "⚠ Please click a number button or 'Send Number' to provide a number.")
 
+    # ----------------- Callback Handling -----------------
     elif "callback_query" in update:
-        # যদি future এ callback button যুক্ত করা হয়
-        pass
+        callback = update["callback_query"]
+        chat_id = callback["message"]["chat"]["id"]
+        callback_id = callback["id"]
+        data = callback["data"]
+
+        if data == "SEND_NUMBER":
+            waiting_for_number.add(chat_id)
+            send_message(chat_id, "✏️ Please type the number now:")
+            answer_callback(callback_id, "💡 Type your number in chat to get info")
+        else:
+            # Number button clicked
+            info = get_num_info(data)
+            send_message(chat_id, info)
+            answer_callback(callback_id, f"✅ Info fetched for {data}")
 
     return "ok"
 
@@ -115,5 +136,4 @@ def set_webhook():
 if __name__ == "__main__":
     set_webhook()
     port = int(os.environ.get("PORT", 5000))
-
     app.run(host="0.0.0.0", port=port)
